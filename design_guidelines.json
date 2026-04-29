@@ -1,0 +1,130 @@
+{
+  "project_type": "react_native_expo",
+  "theme": "Light",
+  "archetype": "High-Contrast Organic (Archetype 1 + 6)",
+  "design_principles": [
+    "High contrast legibility for quick scanning under 3 seconds.",
+    "Frictionless cart and checkout flows - one tap adds.",
+    "Real-time visibility with dynamic tracking - motion indicates speed.",
+    "Bento-box card layouts with crisp 1px borders, no muddy shadows."
+  ],
+  "color_palette": {
+    "background": "#FBF9F6",
+    "surface": "#FFFFFF",
+    "primary": "#FF4C29",
+    "primary_muted": "#FF4C2915",
+    "text_main": "#11181C",
+    "text_muted": "#687076",
+    "success": "#30A46C",
+    "success_muted": "#30A46C15",
+    "warning": "#FFB224",
+    "border": "#EAEAEA"
+  },
+  "typography": {
+    "headings": {
+      "family": "Cabinet Grotesk",
+      "weights": ["Bold", "Black"],
+      "usage": "H1-H4, Price tags, Hero Offers. High impact, structural look."
+    },
+    "body": {
+      "family": "Satoshi",
+      "weights": ["Regular", "Medium", "SemiBold"],
+      "usage": "Product descriptions, labels, tabs, input fields."
+    },
+    "receipt": {
+      "family": "Space Mono",
+      "weights": ["Regular", "Bold"],
+      "usage": "Exclusively for the Bill Slip screen to simulate thermal print."
+    }
+  },
+  "spacing_and_layout": {
+    "system": "8pt grid",
+    "scale": {
+      "xs": 4,
+      "sm": 8,
+      "md": 12,
+      "lg": 16,
+      "xl": 24,
+      "2xl": 32,
+      "3xl": 40,
+      "4xl": 48,
+      "5xl": 64
+    },
+    "border_radius": {
+      "sm": 8,
+      "md": 12,
+      "lg": 16,
+      "xl": 24,
+      "pill": 9999
+    }
+  },
+  "animation_strategy": {
+    "library": "react-native-reanimated",
+    "patterns": [
+      "Layout: Use Reanimated layout={LinearTransition.spring(damping: 14)} for lists.",
+      "Add to Cart: Subtle scale down (0.95) on press, cart badge pop/bounce on success.",
+      "Tracking Map: Pulsing concentric circles behind the rider marker using repeated timing animations.",
+      "Gestures: Swipeable rows for cart deletion and inventory delisting using react-native-gesture-handler."
+    ]
+  },
+  "navigation": {
+    "customer_tabs": ["Home", "Categories", "Cart", "Orders", "Profile"],
+    "admin_tabs": ["Dashboard", "Inventory", "Orders", "Reports"]
+  },
+  "screens": {
+    "splash": {
+      "layout": "Centered logo over primary background (#FF4C29). Staggered text entrance for brand name. High energy."
+    },
+    "login_signup": {
+      "layout": "Bottom sheet style container over brand pattern. Large numeric input for Phone No, solid Primary CTA. Minimal friction."
+    },
+    "customer_home": {
+      "layout": "Sticky search header with location pin. Horizontal banner carousel (h-48). Categories bento grid (2x4). Vertical list for 'Flash Deals' with horizontal scrolling products. Delivery ETA badge always visible."
+    },
+    "product_detail": {
+      "layout": "Full width image at top (max-h-[50vh]). Title, price, tags in p-16 surface container with -mt-6 to overlap image. Sticky bottom bar with quantity stepper and 'Add to Cart'."
+    },
+    "cart_checkout": {
+      "layout": "List of items with swipe-to-delete. Bill details summary bento box. Delivery instruction input. Sticky bottom checkout CTA showing total amount."
+    },
+    "order_tracking": {
+      "layout": "Split screen: Top 60% React Native Map with custom pulsing rider marker. Bottom 40% bottom sheet with rider details, live ETA, order status timeline, and call button."
+    },
+    "profile": {
+      "layout": "Avatar + Name header. List view for Preferences, Saved Addresses, Payment Methods, Past Orders."
+    },
+    "admin_dashboard": {
+      "layout": "Dense bento grid. Today's Orders, Revenue, Pending. High contrast monochrome metrics (Archetype 4 Swiss style). Alerts for low stock."
+    },
+    "admin_inventory": {
+      "layout": "List view with thumbnail, stock count, and price. Swipe right to edit price/discount, swipe left to delist."
+    },
+    "admin_daily_orders": {
+      "layout": "Segmented control (Pending, Preparing, Out). Compact cards with customer name, order #, and one-tap 'Print Bill' icon."
+    },
+    "admin_bill_slip": {
+      "layout": "White modal matching physical paper. Top/bottom edges use zig-zag SVG. Space Mono font. Store details header, dashed divider, itemized list, subtotal/tax/total, customer info footer."
+    }
+  },
+  "media": {
+    "groceries": [
+      "https://images.unsplash.com/photo-1743636521309-41ab36eb89e1?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwyfHxmcmVzaCUyMGNvbG9yZnVsJTIwZ3JvY2VyaWVzJTIwcHJvZHVjZXxlbnwwfHx8fDE3Nzc0NjQxNzh8MA&ixlib=rb-4.1.0&q=85",
+      "https://images.pexels.com/photos/3987371/pexels-photo-3987371.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+    ],
+    "delivery": [
+      "https://images.pexels.com/photos/7362955/pexels-photo-7362955.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "https://images.pexels.com/photos/8988479/pexels-photo-8988479.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+    ],
+    "logo_concept": [
+      "https://images.pexels.com/photos/5820036/pexels-photo-5820036.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+    ]
+  },
+  "technical_notes": {
+    "ui_framework": "React Native Expo (SDK 54), NativeWind v4 (Tailwind CSS for React Native)",
+    "icons": "Lucide React Native",
+    "maps": "react-native-maps",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "testing": "CRITICAL: All interactive and key informational elements MUST include a data-testid attribute (e.g., data-testid='login-button', data-testid='cart-item-1'). Note: In React Native, map this to the testID prop, but ensure the requirement is fulfilled for automated testing."
+  },
+  "instructions_to_main_agent": "Use this JSON to implement the React Native UI. Do not use Inter or Roboto. Enforce high contrast backgrounds for quick scanning. Maintain strict 8pt grid for paddings and margins. All buttons MUST have active opacity or scale animations via Reanimated or Pressable. Implement a robust role-based navigation router separating Customer and Admin stacks. Ensure data-testid is present on all touchables and key text nodes."
+}
