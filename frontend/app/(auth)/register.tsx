@@ -13,14 +13,13 @@ export default function Register() {
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<"customer" | "staff">("customer");
   const [loading, setLoading] = useState(false);
 
   const onRegister = async () => {
     if (!phone || !password || !name) return Alert.alert("Missing", "Fill all fields");
     setLoading(true);
     try {
-      const u = await register(phone.trim(), password, name.trim(), role);
+      const u = await register(phone.trim(), password, name.trim());
       router.replace(u.role === "customer" ? "/(customer)/home" : "/(admin)/dashboard");
     } catch (e: any) {
       Alert.alert("Register failed", e?.response?.data?.detail || "Try again");
@@ -50,22 +49,6 @@ export default function Register() {
           <TextInput testID="reg-password" value={password} onChangeText={setPassword} secureTextEntry
             placeholder="At least 6 chars" placeholderTextColor={COLORS.muted} style={styles.input} />
 
-          <Text style={styles.label}>I am a</Text>
-          <View style={styles.roleRow}>
-            {(["customer", "staff"] as const).map((r) => (
-              <TouchableOpacity
-                key={r}
-                testID={`reg-role-${r}`}
-                onPress={() => setRole(r)}
-                style={[styles.roleChip, role === r && styles.roleChipActive]}
-              >
-                <Text style={[styles.roleTxt, role === r && { color: "#fff" }]}>
-                  {r === "customer" ? "🛒 Customer" : "👨‍💼 Staff"}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
           <TouchableOpacity testID="reg-submit" style={[styles.cta, loading && { opacity: 0.6 }]}
             onPress={onRegister} disabled={loading} activeOpacity={0.9}>
             <Text style={styles.ctaText}>{loading ? "Creating..." : "Create account"}</Text>
@@ -76,6 +59,8 @@ export default function Register() {
               Already have an account? <Text style={{ color: COLORS.primary, fontWeight: "800" }}>Sign in</Text>
             </Text>
           </TouchableOpacity>
+
+          <Text style={styles.note}>Staff accounts are created by the shop admin.</Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -94,14 +79,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff", borderWidth: 1, borderColor: COLORS.border, borderRadius: RAD.md,
     paddingHorizontal: SP.lg, paddingVertical: 14, fontSize: 16, color: COLORS.text,
   },
-  roleRow: { flexDirection: "row", gap: SP.sm, marginTop: 4 },
-  roleChip: {
-    flex: 1, paddingVertical: 14, borderRadius: RAD.md, borderWidth: 1.5, borderColor: COLORS.border,
-    backgroundColor: "#fff", alignItems: "center",
-  },
-  roleChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-  roleTxt: { fontWeight: "700", color: COLORS.text },
   cta: { backgroundColor: COLORS.primary, marginTop: SP.xl, borderRadius: RAD.md, paddingVertical: 16, alignItems: "center" },
   ctaText: { color: "#fff", fontSize: 16, fontWeight: "800" },
   altLink: { textAlign: "center", marginTop: SP.lg, color: COLORS.muted, fontSize: 14 },
+  note: { textAlign: "center", marginTop: SP.md, color: COLORS.muted, fontSize: 11, fontStyle: "italic" },
 });

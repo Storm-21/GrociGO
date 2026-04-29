@@ -84,7 +84,6 @@ class RegisterIn(BaseModel):
     phone: str
     password: str
     name: str
-    role: Optional[str] = "customer"
 
 
 class LoginIn(BaseModel):
@@ -150,7 +149,7 @@ async def register(data: RegisterIn):
         raise HTTPException(400, "Phone too short")
     if await db.users.find_one({"phone": phone}):
         raise HTTPException(400, "Phone already registered")
-    role = data.role if data.role in ("customer", "staff") else "customer"
+    role = "customer"  # public registration is always customer; staff is created by admin
     user = {
         "id": str(uuid.uuid4()),
         "phone": phone,
