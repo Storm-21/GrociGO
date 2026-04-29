@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { View, Text, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, ActivityIndicator, Platform } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../src/auth";
 import { COLORS } from "../src/theme";
@@ -10,21 +10,24 @@ export default function Index() {
 
   useEffect(() => {
     if (user === undefined) return;
+    // Web users default to staff portal landing; mobile users default to customer flow
+    const isWeb = Platform.OS === "web";
     if (user === null) {
-      router.replace("/(auth)/login");
+      if (isWeb) router.replace("/portal/login");
+      else router.replace("/(auth)/login");
     } else if (user.role === "customer") {
       router.replace("/(customer)/home");
     } else {
-      router.replace("/(admin)/dashboard");
+      router.replace("/portal/dashboard");
     }
   }, [user]);
 
   return (
     <View style={styles.container} testID="splash-screen">
       <View style={styles.logoBox}>
-        <Text style={styles.logoEmoji}>🧺</Text>
+        <Text style={styles.logoEmoji}>🥬</Text>
       </View>
-      <Text style={styles.brand} testID="splash-brand">Daily Basket</Text>
+      <Text style={styles.brand} testID="splash-brand">GrociGO</Text>
       <Text style={styles.tag}>Fresh groceries · 10 min delivery</Text>
       <ActivityIndicator color="#fff" style={{ marginTop: 32 }} />
     </View>

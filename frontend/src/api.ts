@@ -18,15 +18,18 @@ api.interceptors.request.use(async (config) => {
 });
 
 export const authApi = {
-  login: (phone: string, password: string) =>
-    api.post("/auth/login", { phone, password }).then((r) => r.data),
-  register: (phone: string, password: string, name: string, role = "customer") =>
-    api.post("/auth/register", { phone, password, name, role }).then((r) => r.data),
+  requestOtp: (phone: string) =>
+    api.post("/auth/request-otp", { phone }).then((r) => r.data),
+  verifyOtp: (phone: string, otp: string, name?: string) =>
+    api.post("/auth/verify-otp", { phone, otp, name }).then((r) => r.data),
+  staffLogin: (staff_id: string, password: string) =>
+    api.post("/auth/staff-login", { staff_id, password }).then((r) => r.data),
   me: () => api.get("/auth/me").then((r) => r.data),
 };
 
 export const shopApi = {
-  categories: () => api.get("/categories").then((r) => r.data),
+  categories: (includeHidden = false) =>
+    api.get("/categories", { params: { include_hidden: includeHidden } }).then((r) => r.data),
   products: (params?: { category_id?: string; q?: string; include_inactive?: boolean }) =>
     api.get("/products", { params }).then((r) => r.data),
   product: (id: string) => api.get(`/products/${id}`).then((r) => r.data),
@@ -55,8 +58,13 @@ export const adminApi = {
   toggleActive: (id: string, active: boolean) =>
     api.patch(`/products/${id}/active?active=${active}`).then((r) => r.data),
   updateShop: (s: any) => api.put("/shop-settings", s).then((r) => r.data),
-};
-
-export const meApi = {
-  update: (data: any) => api.put("/me", data).then((r) => r.data),
+  // Categories
+  createCategory: (c: any) => api.post("/categories", c).then((r) => r.data),
+  updateCategory: (id: string, c: any) => api.put(`/categories/${id}`, c).then((r) => r.data),
+  deleteCategory: (id: string) => api.delete(`/categories/${id}`).then((r) => r.data),
+  // Staff
+  createStaff: (data: { name: string; phone?: string }) =>
+    api.post("/admin/staff", data).then((r) => r.data),
+  listStaff: () => api.get("/admin/staff").then((r) => r.data),
+  deleteStaff: (id: string) => api.delete(`/admin/staff/${id}`).then((r) => r.data),
 };

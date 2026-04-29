@@ -17,12 +17,11 @@ export default function RootLayout() {
               <Stack.Screen name="index" />
               <Stack.Screen name="(auth)" />
               <Stack.Screen name="(customer)" />
-              <Stack.Screen name="(admin)" />
+              <Stack.Screen name="portal" />
               <Stack.Screen name="product/[id]" />
               <Stack.Screen name="checkout" options={{ presentation: "modal" }} />
               <Stack.Screen name="track/[id]" />
               <Stack.Screen name="bill/[id]" options={{ presentation: "modal" }} />
-              <Stack.Screen name="admin-product" options={{ presentation: "modal" }} />
             </Stack>
           </CartProvider>
         </AuthProvider>

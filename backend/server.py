@@ -8,12 +8,13 @@ import os
 import logging
 import uuid
 import random
+import string
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 import bcrypt
 import jwt
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, status
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -25,12 +26,13 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 # ---------- App ----------
-app = FastAPI(title="Daily Basket API")
+app = FastAPI(title="GrociGO API")
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
 
 JWT_SECRET = os.environ['JWT_SECRET']
 JWT_ALG = "HS256"
+DEV_OTP = "123456"  # In dev mode, every OTP is 123456 (or returned in response)
 
 
 # ---------- Helpers ----------
@@ -46,11 +48,8 @@ def verify_password(pw: str, hashed: str) -> bool:
 
 
 def create_token(user_id: str, role: str) -> str:
-    payload = {
-        "sub": user_id,
-        "role": role,
-        "exp": datetime.now(timezone.utc) + timedelta(days=30),
-    }
+    payload = {"sub": user_id, "role": role,
+               "exp": datetime.now(timezone.utc) + timedelta(days=30)}
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 
@@ -75,26 +74,50 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+async def require_super_admin(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admin only")
+    return user
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def gen_staff_id() -> str:
+    return "STF" + "".join(random.choices(string.digits, k=6))
+
+
+def gen_password() -> str:
+    return "".join(random.choices(string.ascii_letters + string.digits, k=10))
+
+
 # ---------- Models ----------
-class RegisterIn(BaseModel):
+class RequestOtpIn(BaseModel):
     phone: str
+
+
+class VerifyOtpIn(BaseModel):
+    phone: str
+    otp: str
+    name: Optional[str] = None  # provided on first signup
+
+
+class StaffLoginIn(BaseModel):
+    staff_id: str
     password: str
+
+
+class CreateStaffIn(BaseModel):
     name: str
-
-
-class LoginIn(BaseModel):
-    phone: str
-    password: str
+    phone: str = ""
 
 
 class CategoryIn(BaseModel):
     name: str
     icon: str = "ShoppingBasket"
-    color: str = "#FF4C29"
+    color: str = "#0D9488"
+    hidden_for_customer: bool = False
 
 
 class ProductIn(BaseModel):
@@ -125,52 +148,82 @@ class AddressIn(BaseModel):
 class OrderIn(BaseModel):
     items: List[CartItemIn]
     address: AddressIn
-    payment_method: str  # cod, stripe, razorpay
+    payment_method: str
     notes: str = ""
 
 
 class OrderStatusIn(BaseModel):
-    status: str  # placed, preparing, out_for_delivery, delivered, cancelled
+    status: str
 
 
 class ShopSettingsIn(BaseModel):
     name: str
     address: str
     phone: str
+    email: str = ""
+    owner_name: str = ""
     gst: str = ""
     tagline: str = ""
+    primary_color: str = "#0D9488"
+    accent_color: str = "#5EEAD4"
+    logo_base64: str = ""
+    cover_base64: str = ""
 
 
-# ---------- Auth ----------
-@api_router.post("/auth/register")
-async def register(data: RegisterIn):
+# ---------- Customer OTP Auth ----------
+@api_router.post("/auth/request-otp")
+async def request_otp(data: RequestOtpIn):
     phone = data.phone.strip()
     if len(phone) < 6:
         raise HTTPException(400, "Phone too short")
-    if await db.users.find_one({"phone": phone}):
-        raise HTTPException(400, "Phone already registered")
-    role = "customer"  # public registration is always customer; staff is created by admin
-    user = {
-        "id": str(uuid.uuid4()),
-        "phone": phone,
-        "name": data.name,
-        "role": role,
-        "password_hash": hash_password(data.password),
-        "created_at": now_iso(),
-        "addresses": [],
-        "preferences": {},
-    }
-    await db.users.insert_one(user)
+    expires = datetime.now(timezone.utc) + timedelta(minutes=10)
+    await db.otp_codes.update_one(
+        {"phone": phone},
+        {"$set": {"phone": phone, "otp": DEV_OTP, "expires_at": expires.isoformat()}},
+        upsert=True,
+    )
+    # In production -> send SMS. Dev mode -> return otp in response (do NOT do this in prod)
+    return {"sent": True, "dev_otp": DEV_OTP, "message": f"OTP sent to {phone} (dev mode: use {DEV_OTP})"}
+
+
+@api_router.post("/auth/verify-otp")
+async def verify_otp(data: VerifyOtpIn):
+    phone = data.phone.strip()
+    rec = await db.otp_codes.find_one({"phone": phone})
+    if not rec or rec["otp"] != data.otp:
+        raise HTTPException(400, "Invalid OTP")
+    if datetime.fromisoformat(rec["expires_at"]) < datetime.now(timezone.utc):
+        raise HTTPException(400, "OTP expired")
+    user = await db.users.find_one({"phone": phone})
+    if not user:
+        # First-time login -> auto create customer
+        if not data.name:
+            return {"new_user": True, "phone": phone, "message": "Provide name to complete signup"}
+        user = {
+            "id": str(uuid.uuid4()),
+            "phone": phone,
+            "name": data.name,
+            "role": "customer",
+            "password_hash": "",  # OTP-only login
+            "created_at": now_iso(),
+            "addresses": [],
+            "preferences": {},
+        }
+        await db.users.insert_one(user)
+    await db.otp_codes.delete_one({"phone": phone})
     user.pop("password_hash", None)
     user.pop("_id", None)
-    return {"access_token": create_token(user["id"], role), "user": user}
+    return {"access_token": create_token(user["id"], user["role"]), "user": user}
 
 
-@api_router.post("/auth/login")
-async def login(data: LoginIn):
-    user = await db.users.find_one({"phone": data.phone.strip()})
+# ---------- Staff/Admin Login (ID + password) ----------
+@api_router.post("/auth/staff-login")
+async def staff_login(data: StaffLoginIn):
+    user = await db.users.find_one({"staff_id": data.staff_id.strip()})
     if not user or not verify_password(data.password, user["password_hash"]):
-        raise HTTPException(401, "Invalid phone or password")
+        raise HTTPException(401, "Invalid staff ID or password")
+    if user["role"] not in ("admin", "staff"):
+        raise HTTPException(403, "Not a staff account")
     user.pop("password_hash", None)
     user.pop("_id", None)
     return {"access_token": create_token(user["id"], user["role"]), "user": user}
@@ -181,10 +234,43 @@ async def me(user: dict = Depends(get_current_user)):
     return user
 
 
+# ---------- Staff Management (admin only) ----------
+@api_router.post("/admin/staff")
+async def create_staff(data: CreateStaffIn, _admin: dict = Depends(require_super_admin)):
+    staff_id = gen_staff_id()
+    while await db.users.find_one({"staff_id": staff_id}):
+        staff_id = gen_staff_id()
+    pwd = gen_password()
+    user = {
+        "id": str(uuid.uuid4()),
+        "staff_id": staff_id,
+        "phone": data.phone or "",
+        "name": data.name,
+        "role": "staff",
+        "password_hash": hash_password(pwd),
+        "created_at": now_iso(),
+    }
+    await db.users.insert_one(user)
+    return {"staff_id": staff_id, "password": pwd, "name": data.name, "id": user["id"]}
+
+
+@api_router.get("/admin/staff")
+async def list_staff(_admin: dict = Depends(require_super_admin)):
+    rows = await db.users.find({"role": {"$in": ["admin", "staff"]}}, {"_id": 0, "password_hash": 0}).to_list(500)
+    return rows
+
+
+@api_router.delete("/admin/staff/{sid}")
+async def delete_staff(sid: str, _admin: dict = Depends(require_super_admin)):
+    await db.users.delete_one({"id": sid, "role": "staff"})
+    return {"ok": True}
+
+
 # ---------- Categories ----------
 @api_router.get("/categories")
-async def list_categories():
-    return await db.categories.find({}, {"_id": 0}).to_list(500)
+async def list_categories(include_hidden: bool = False):
+    q = {} if include_hidden else {"hidden_for_customer": {"$ne": True}}
+    return await db.categories.find(q, {"_id": 0}).to_list(500)
 
 
 @api_router.post("/categories")
@@ -195,18 +281,33 @@ async def create_category(data: CategoryIn, _admin: dict = Depends(require_admin
     return cat
 
 
+@api_router.put("/categories/{cid}")
+async def update_category(cid: str, data: CategoryIn, _admin: dict = Depends(require_admin)):
+    await db.categories.update_one({"id": cid}, {"$set": data.dict()})
+    return await db.categories.find_one({"id": cid}, {"_id": 0})
+
+
+@api_router.delete("/categories/{cid}")
+async def delete_category(cid: str, _admin: dict = Depends(require_admin)):
+    await db.categories.delete_one({"id": cid})
+    return {"ok": True}
+
+
 # ---------- Products ----------
 @api_router.get("/products")
 async def list_products(category_id: Optional[str] = None, q: Optional[str] = None, include_inactive: bool = False):
     query = {}
     if not include_inactive:
         query["active"] = True
+        # also exclude products in hidden categories for customer view
+        hidden_cats = [c["id"] async for c in db.categories.find({"hidden_for_customer": True}, {"id": 1, "_id": 0})]
+        if hidden_cats:
+            query["category_id"] = {"$nin": hidden_cats}
     if category_id:
         query["category_id"] = category_id
     if q:
         query["name"] = {"$regex": q, "$options": "i"}
-    items = await db.products.find(query, {"_id": 0}).to_list(1000)
-    return items
+    return await db.products.find(query, {"_id": 0}).to_list(1000)
 
 
 @api_router.get("/products/{pid}")
@@ -264,40 +365,23 @@ async def place_order(data: OrderIn, user: dict = Depends(get_current_user)):
         line = calc_price(p, it.quantity)
         subtotal += line
         enriched_items.append({
-            "product_id": p["id"],
-            "name": p["name"],
-            "image": p.get("image", ""),
-            "unit": p.get("unit", ""),
-            "price": p["price"],
-            "discount_pct": p.get("discount_pct", 0),
-            "quantity": it.quantity,
-            "line_total": line,
+            "product_id": p["id"], "name": p["name"], "image": p.get("image", ""),
+            "unit": p.get("unit", ""), "price": p["price"], "discount_pct": p.get("discount_pct", 0),
+            "quantity": it.quantity, "line_total": line,
         })
     delivery_fee = 0 if subtotal >= 199 else 25
     tax = round(subtotal * 0.05, 2)
     total = round(subtotal + delivery_fee + tax, 2)
     order = {
         "id": str(uuid.uuid4()),
-        "order_no": f"DB{int(datetime.now().timestamp())}{random.randint(10, 99)}",
-        "user_id": user["id"],
-        "user_name": user["name"],
-        "user_phone": user["phone"],
-        "items": enriched_items,
-        "address": data.address.dict(),
+        "order_no": f"GG{int(datetime.now().timestamp())}{random.randint(10, 99)}",
+        "user_id": user["id"], "user_name": user["name"], "user_phone": user["phone"],
+        "items": enriched_items, "address": data.address.dict(),
         "payment_method": data.payment_method,
         "payment_status": "pending" if data.payment_method == "cod" else "paid",
-        "subtotal": round(subtotal, 2),
-        "delivery_fee": delivery_fee,
-        "tax": tax,
-        "total": total,
-        "status": "placed",
-        "notes": data.notes,
-        "created_at": now_iso(),
-        "rider": {
-            "name": "Ravi Kumar",
-            "phone": "+91 98765 43210",
-            "vehicle": "DL 9C 1234",
-        },
+        "subtotal": round(subtotal, 2), "delivery_fee": delivery_fee, "tax": tax, "total": total,
+        "status": "placed", "notes": data.notes, "created_at": now_iso(),
+        "rider": {"name": "Ravi Kumar", "phone": "+91 98765 43210", "vehicle": "DL 9C 1234"},
         "tracking_started_at": now_iso(),
     }
     await db.orders.insert_one(order)
@@ -346,30 +430,21 @@ async def tracking(oid: str, user: dict = Depends(get_current_user)):
         raise HTTPException(404, "Not found")
     if user["role"] == "customer" and o["user_id"] != user["id"]:
         raise HTTPException(403, "Forbidden")
-    # Simulate movement: position progresses 0->1 over 12 minutes since tracking_started_at
     started = datetime.fromisoformat(o.get("tracking_started_at", o["created_at"]))
     elapsed = (datetime.now(timezone.utc) - started).total_seconds()
-    # Status-based progress
     status = o["status"]
-    base = {"placed": 0.05, "preparing": 0.15, "out_for_delivery": min(0.25 + elapsed / 720, 0.95), "delivered": 1.0, "cancelled": 0}
+    base = {"placed": 0.05, "preparing": 0.15,
+            "out_for_delivery": min(0.25 + elapsed / 720, 0.95),
+            "delivered": 1.0, "cancelled": 0}
     progress = base.get(status, 0)
     eta_min = max(int((1 - progress) * 15), 1) if status not in ("delivered", "cancelled") else 0
-    # Simulated coords (store at 28.61, 77.20 -> customer 28.63, 77.22)
     store = {"lat": 28.6139, "lng": 77.2090}
     cust = {"lat": 28.6280, "lng": 77.2200}
-    rider = {
-        "lat": store["lat"] + (cust["lat"] - store["lat"]) * progress,
-        "lng": store["lng"] + (cust["lng"] - store["lng"]) * progress,
-    }
+    rider = {"lat": store["lat"] + (cust["lat"] - store["lat"]) * progress,
+             "lng": store["lng"] + (cust["lng"] - store["lng"]) * progress}
     return {
-        "order_id": oid,
-        "status": status,
-        "progress": round(progress, 3),
-        "eta_min": eta_min,
-        "store": store,
-        "customer": cust,
-        "rider": rider,
-        "rider_info": o.get("rider", {}),
+        "order_id": oid, "status": status, "progress": round(progress, 3), "eta_min": eta_min,
+        "store": store, "customer": cust, "rider": rider, "rider_info": o.get("rider", {}),
         "timeline": [
             {"label": "Order placed", "done": True, "at": o["created_at"]},
             {"label": "Preparing", "done": status in ("preparing", "out_for_delivery", "delivered")},
@@ -400,15 +475,10 @@ async def admin_dashboard(_admin: dict = Depends(require_admin)):
     revenue = round(sum(o["total"] for o in today_orders if o["status"] != "cancelled"), 2)
     low_stock = await db.products.find({"stock": {"$lt": 10}, "active": True}, {"_id": 0}).to_list(50)
     total_products = await db.products.count_documents({})
-    return {
-        "today_orders": len(today_orders),
-        "today_pending": len(pending),
-        "today_delivered": len(delivered),
-        "today_revenue": revenue,
-        "low_stock_count": len(low_stock),
-        "total_products": total_products,
-        "low_stock_items": low_stock[:10],
-    }
+    return {"today_orders": len(today_orders), "today_pending": len(pending),
+            "today_delivered": len(delivered), "today_revenue": revenue,
+            "low_stock_count": len(low_stock), "total_products": total_products,
+            "low_stock_items": low_stock[:10]}
 
 
 @api_router.get("/admin/balance-sheet")
@@ -436,7 +506,7 @@ async def balance_sheet(_admin: dict = Depends(require_admin), days: int = 7):
     return {"days": rows, "summary": summary}
 
 
-# ---------- Shop Settings ----------
+# ---------- Shop Settings (theme + contact) ----------
 @api_router.get("/shop-settings")
 async def get_shop():
     s = await db.shop_settings.find_one({"id": "main"}, {"_id": 0})
@@ -471,22 +541,21 @@ async def update_me(data: ProfileIn, user: dict = Depends(get_current_user)):
     return await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
 
 
-# ---------- Health ----------
 @api_router.get("/")
 async def root():
-    return {"app": "Daily Basket API", "ok": True}
+    return {"app": "GrociGO API", "ok": True}
 
 
 # ---------- Seed ----------
 SEED_CATEGORIES = [
-    {"name": "Fruits & Veggies", "icon": "Apple", "color": "#30A46C"},
-    {"name": "Dairy & Eggs", "icon": "Milk", "color": "#FFB224"},
-    {"name": "Snacks & Drinks", "icon": "Coffee", "color": "#FF4C29"},
-    {"name": "Bakery", "icon": "Croissant", "color": "#A855F7"},
-    {"name": "Personal Care", "icon": "Sparkles", "color": "#0EA5E9"},
-    {"name": "Household", "icon": "Home", "color": "#EF4444"},
-    {"name": "Frozen", "icon": "Snowflake", "color": "#06B6D4"},
-    {"name": "Cooking Essentials", "icon": "ChefHat", "color": "#F59E0B"},
+    {"name": "Fruits & Veggies", "icon": "Apple", "color": "#10B981", "hidden_for_customer": True},  # HIDDEN per request
+    {"name": "Dairy & Eggs", "icon": "Milk", "color": "#06B6D4", "hidden_for_customer": False},
+    {"name": "Snacks & Drinks", "icon": "Coffee", "color": "#0D9488", "hidden_for_customer": False},
+    {"name": "Bakery", "icon": "Croissant", "color": "#0891B2", "hidden_for_customer": False},
+    {"name": "Personal Care", "icon": "Sparkles", "color": "#14B8A6", "hidden_for_customer": False},
+    {"name": "Household", "icon": "Home", "color": "#0E7490", "hidden_for_customer": False},
+    {"name": "Frozen", "icon": "Snowflake", "color": "#22D3EE", "hidden_for_customer": False},
+    {"name": "Cooking Essentials", "icon": "ChefHat", "color": "#0369A1", "hidden_for_customer": False},
 ]
 
 SEED_PRODUCTS = [
@@ -517,36 +586,45 @@ SEED_PRODUCTS = [
 
 @app.on_event("startup")
 async def startup():
-    # Indexes
-    await db.users.create_index("phone", unique=True)
+    await db.users.create_index("phone")
+    await db.users.create_index("staff_id", sparse=True)
     await db.products.create_index("category_id")
     await db.orders.create_index("user_id")
     await db.orders.create_index("created_at")
+    await db.otp_codes.create_index("phone", unique=True)
+    await db.otp_codes.create_index("expires_at", expireAfterSeconds=600)
 
-    # Seed admin
+    # Seed admin (with both staff_id login + phone)
     admin_phone = os.environ.get("ADMIN_PHONE", "9999999999")
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")
-    if not await db.users.find_one({"phone": admin_phone}):
+    admin = await db.users.find_one({"role": "admin"})
+    if not admin:
         await db.users.insert_one({
             "id": str(uuid.uuid4()),
+            "staff_id": "ADMIN001",
             "phone": admin_phone,
             "name": "Shop Admin",
             "role": "admin",
             "password_hash": hash_password(admin_pw),
             "created_at": now_iso(),
-            "addresses": [],
-            "preferences": {},
+            "addresses": [], "preferences": {},
         })
 
-    # Seed shop settings
+    # Seed shop settings (GrociGO + teal theme)
     if not await db.shop_settings.find_one({"id": "main"}):
         await db.shop_settings.insert_one({
             "id": "main",
-            "name": "Daily Basket",
+            "name": "GrociGO",
             "address": "Shop No. 12, Market Street, New Delhi - 110001",
             "phone": "+91 98765 43210",
+            "email": "hello@grocigo.com",
+            "owner_name": "Shop Owner",
             "gst": "07ABCDE1234F1Z5",
             "tagline": "Fresh groceries delivered in minutes",
+            "primary_color": "#0D9488",
+            "accent_color": "#5EEAD4",
+            "logo_base64": "",
+            "cover_base64": "",
             "updated_at": now_iso(),
         })
 
@@ -555,37 +633,21 @@ async def startup():
         cats_by_name = {}
         for c in SEED_CATEGORIES:
             cid = str(uuid.uuid4())
-            cat = {"id": cid, **c, "created_at": now_iso()}
-            await db.categories.insert_one(cat)
+            await db.categories.insert_one({"id": cid, **c, "created_at": now_iso()})
             cats_by_name[c["name"]] = cid
         for name, cat_name, price, disc, unit, img in SEED_PRODUCTS:
             await db.products.insert_one({
-                "id": str(uuid.uuid4()),
-                "name": name,
+                "id": str(uuid.uuid4()), "name": name,
                 "description": f"Premium quality {name.lower()}",
-                "price": float(price),
-                "discount_pct": float(disc),
-                "category_id": cats_by_name[cat_name],
-                "image": img,
-                "unit": unit,
-                "stock": random.randint(20, 100),
-                "active": True,
-                "created_at": now_iso(),
+                "price": float(price), "discount_pct": float(disc),
+                "category_id": cats_by_name[cat_name], "image": img, "unit": unit,
+                "stock": random.randint(20, 100), "active": True, "created_at": now_iso(),
             })
 
 
-# ---------- Mount ----------
 app.include_router(api_router)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

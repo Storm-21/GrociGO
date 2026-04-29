@@ -7,14 +7,14 @@ type User = {
   phone: string;
   name: string;
   role: "customer" | "staff" | "admin";
+  staff_id?: string;
   addresses?: any[];
   preferences?: any;
 };
 
 type Ctx = {
-  user: User | null | undefined; // undefined = loading
-  login: (phone: string, password: string) => Promise<User>;
-  register: (phone: string, password: string, name: string, role?: string) => Promise<User>;
+  user: User | null | undefined;
+  staffLogin: (staff_id: string, password: string) => Promise<User>;
   logout: () => Promise<void>;
   setUser: (u: User | null) => void;
 };
@@ -27,10 +27,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       const token = await AsyncStorage.getItem("token");
-      if (!token) {
-        setUser(null);
-        return;
-      }
+      if (!token) { setUser(null); return; }
       try {
         const me = await authApi.me();
         setUser(me);
@@ -41,15 +38,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  const login = async (phone: string, password: string) => {
-    const res = await authApi.login(phone, password);
-    await AsyncStorage.setItem("token", res.access_token);
-    setUser(res.user);
-    return res.user;
-  };
-
-  const register = async (phone: string, password: string, name: string, role = "customer") => {
-    const res = await authApi.register(phone, password, name, role);
+  const staffLogin = async (staff_id: string, password: string) => {
+    const res = await authApi.staffLogin(staff_id, password);
     await AsyncStorage.setItem("token", res.access_token);
     setUser(res.user);
     return res.user;
@@ -61,7 +51,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, setUser }}>
+    <AuthContext.Provider value={{ user, staffLogin, logout, setUser }}>
       {children}
     </AuthContext.Provider>
   );

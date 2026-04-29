@@ -1,23 +1,26 @@
 export const COLORS = {
-  bg: "#FBF9F6",
+  bg: "#F0FDFA",
   surface: "#FFFFFF",
-  primary: "#FF4C29",
-  primaryMuted: "#FFE9E2",
-  text: "#11181C",
-  muted: "#687076",
-  success: "#30A46C",
-  successMuted: "#E2F5EC",
-  warning: "#FFB224",
-  border: "#EAEAEA",
-  black: "#000000",
-  yellow: "#FFE45E",
+  primary: "#0D9488",
+  primaryDark: "#0F766E",
+  primaryMuted: "#CCFBF1",
+  accent: "#5EEAD4",
+  text: "#064E3B",
+  muted: "#5C7C7C",
+  success: "#059669",
+  successMuted: "#D1FAE5",
+  warning: "#F59E0B",
+  border: "#CCFBF1",
+  black: "#0F172A",
+  yellow: "#FDE68A",
+  danger: "#EF4444",
 };
 
 export const SP = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 40 };
 export const RAD = { sm: 8, md: 12, lg: 16, xl: 24, pill: 9999 };
 
 export const FONT = {
-  heading: undefined as undefined | string, // system bold
+  heading: undefined as undefined | string,
   body: undefined as undefined | string,
   mono: "Courier",
 };
