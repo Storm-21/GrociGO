@@ -80,6 +80,27 @@ export default function Settings() {
       </View>
 
       <View style={s.section}>
+        <Text style={s.secT}>Admin access (Google login allowlist)</Text>
+        <Text style={s.secS}>Comma-separated Gmail addresses. These users get admin role when they log in with Google.</Text>
+        <TextInput
+          testID="set-admins"
+          value={(d.admin_emails || []).join(", ")}
+          onChangeText={(v: string) => upd("admin_emails", v.split(",").map((s) => s.trim()).filter(Boolean))}
+          placeholder="owner@gmail.com, manager@gmail.com"
+          placeholderTextColor={COLORS.muted}
+          style={s.in}
+          autoCapitalize="none"
+        />
+      </View>
+
+      <View style={s.section}>
+        <Text style={s.secT}>Razorpay payment gateway</Text>
+        <Text style={s.secS}>Get test/live keys from https://dashboard.razorpay.com/app/keys. Customers see Razorpay checkout once both are filled.</Text>
+        <Field label="Key ID" v={d.razorpay_key_id} on={(v: string) => upd("razorpay_key_id", v)} testID="set-rp-key" />
+        <Field label="Key Secret" v={d.razorpay_key_secret} on={(v: string) => upd("razorpay_key_secret", v)} testID="set-rp-secret" />
+      </View>
+
+      <View style={s.section}>
         <Text style={s.secT}>Logo & cover (base64 image data)</Text>
         <Text style={s.secS}>Paste a base64-encoded image (data:image/png;base64,...) to replace the customer app's logo or cover banner.</Text>
         <Field label="Logo base64" v={d.logo_base64} on={(v: string) => upd("logo_base64", v)} testID="set-logo" multi />

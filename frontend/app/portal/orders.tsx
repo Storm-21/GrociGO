@@ -1,10 +1,10 @@
 import React, { useState, useCallback } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Linking, Platform } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
-import { Receipt, ArrowRight } from "lucide-react-native";
+import { Receipt, ArrowRight, Download } from "lucide-react-native";
 import PortalShell from "../../src/portalShell";
 import { COLORS, RAD, SP } from "../../src/theme";
-import { orderApi } from "../../src/api";
+import { orderApi, adminApi } from "../../src/api";
 
 const TABS = [
   { id: "placed", label: "New Orders" },
@@ -35,8 +35,20 @@ export default function Orders() {
 
   return (
     <PortalShell active="orders">
-      <Text style={s.h}>Orders Console</Text>
-      <Text style={s.sub}>Track and fulfill incoming orders in real-time</Text>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <View>
+          <Text style={s.h}>Orders Console</Text>
+          <Text style={s.sub}>Track and fulfill incoming orders in real-time</Text>
+        </View>
+        <TouchableOpacity testID="export-orders" style={s.exportBtn} onPress={() => {
+          const url = adminApi.exportOrdersCsv(30);
+          if (Platform.OS === "web") (window as any).open(url, "_blank");
+          else Linking.openURL(url);
+        }}>
+          <Download color="#fff" size={16} />
+          <Text style={s.exportT}>Export 30 days CSV</Text>
+        </TouchableOpacity>
+      </View>
 
       <View style={s.tabs}>
         {TABS.map((t) => (
@@ -104,4 +116,6 @@ const s = StyleSheet.create({
   billT: { fontWeight: "800", color: COLORS.text, fontSize: 13 },
   adv: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 8, backgroundColor: COLORS.primary, flex: 1 },
   advT: { color: "#fff", fontWeight: "900", fontSize: 13, textTransform: "capitalize" },
+  exportBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: COLORS.text, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
+  exportT: { color: "#fff", fontWeight: "800", fontSize: 13 },
 });

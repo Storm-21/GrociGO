@@ -18,13 +18,14 @@ api.interceptors.request.use(async (config) => {
 });
 
 export const authApi = {
-  requestOtp: (phone: string) =>
-    api.post("/auth/request-otp", { phone }).then((r) => r.data),
-  verifyOtp: (phone: string, otp: string, name?: string) =>
-    api.post("/auth/verify-otp", { phone, otp, name }).then((r) => r.data),
+  // Customer Google login
+  googleCallback: (session_id: string) =>
+    api.post("/auth/google-callback", { session_id }).then((r) => r.data),
+  // Staff/Admin login (ID + password)
   staffLogin: (staff_id: string, password: string) =>
     api.post("/auth/staff-login", { staff_id, password }).then((r) => r.data),
   me: () => api.get("/auth/me").then((r) => r.data),
+  logout: () => api.post("/auth/logout").then((r) => r.data),
 };
 
 export const shopApi = {
@@ -58,6 +59,10 @@ export const adminApi = {
   toggleActive: (id: string, active: boolean) =>
     api.patch(`/products/${id}/active?active=${active}`).then((r) => r.data),
   updateShop: (s: any) => api.put("/shop-settings", s).then((r) => r.data),
+  exportOrdersCsv: (days = 30) => `${BASE}/api/admin/orders/export?days=${days}`,
+  // Razorpay
+  rpCreate: (order_id: string) => api.post("/payments/razorpay/create", { order_id }).then((r) => r.data),
+  rpVerify: (payload: any) => api.post("/payments/razorpay/verify", payload).then((r) => r.data),
   // Categories
   createCategory: (c: any) => api.post("/categories", c).then((r) => r.data),
   updateCategory: (id: string, c: any) => api.put(`/categories/${id}`, c).then((r) => r.data),

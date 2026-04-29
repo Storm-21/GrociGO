@@ -4,16 +4,14 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { ChevronLeft, MapPin, Banknote, CreditCard, Smartphone } from "lucide-react-native";
+import { ChevronLeft, MapPin, Banknote, CreditCard } from "lucide-react-native";
 import { COLORS, RAD, SP } from "../src/theme";
 import { useCart } from "../src/cart";
 import { orderApi } from "../src/api";
 
 const PAY_OPTS = [
-  { id: "cod", label: "Cash on Delivery", icon: "cash", desc: "Pay when delivered" },
-  { id: "upi", label: "UPI", icon: "upi", desc: "Google Pay, PhonePe, Paytm" },
-  { id: "card", label: "Credit / Debit Card", icon: "card", desc: "Visa, Mastercard, Rupay" },
-  { id: "wallet", label: "Wallet", icon: "wallet", desc: "Paytm Wallet, Amazon Pay" },
+  { id: "cod", label: "Cash on Delivery", desc: "Pay when delivered" },
+  { id: "razorpay", label: "Razorpay (UPI / Card / Wallet / NetBanking)", desc: "Secure online payment" },
 ];
 
 export default function Checkout() {
@@ -42,6 +40,21 @@ export default function Checkout() {
         payment_method: pay,
         notes,
       });
+      if (pay === "razorpay") {
+        if (Platform.OS !== "web") {
+          Alert.alert("Razorpay", "Razorpay checkout works on web. Order placed (pay later in browser).");
+          clear();
+          router.replace(`/track/${order.id}`);
+          return;
+        }
+        try {
+          const rp = await (await import("../src/api")).adminApi.rpCreate(order.id);
+          await openRazorpay(rp, order.id);
+        } catch (e: any) {
+          Alert.alert("Razorpay error", e?.response?.data?.detail || "Admin must configure Razorpay keys in Shop Settings.");
+          // fall back to COD-style success (order is placed; payment pending)
+        }
+      }
       clear();
       router.replace(`/track/${order.id}`);
     } catch (e: any) {
@@ -50,6 +63,44 @@ export default function Checkout() {
       setLoading(false);
     }
   };
+
+  const openRazorpay = async (rp: any, orderId: string) =>
+    new Promise<void>((resolve, reject) => {
+      // Inject Razorpay script
+      const w: any = window as any;
+      const open = () => {
+        const options = {
+          key: rp.key_id,
+          amount: rp.rp_order.amount,
+          currency: rp.rp_order.currency,
+          name: "GrociGO",
+          description: `Order ${rp.order.id.slice(0, 8)}`,
+          order_id: rp.rp_order.id,
+          prefill: { name: rp.order.name },
+          theme: { color: "#0D9488" },
+          handler: async (resp: any) => {
+            try {
+              await (await import("../src/api")).adminApi.rpVerify({
+                order_id: orderId,
+                razorpay_order_id: resp.razorpay_order_id,
+                razorpay_payment_id: resp.razorpay_payment_id,
+                razorpay_signature: resp.razorpay_signature,
+              });
+              resolve();
+            } catch (err) { reject(err); }
+          },
+          modal: { ondismiss: () => resolve() },  // user closed → order stays unpaid
+        };
+        const r = new w.Razorpay(options);
+        r.open();
+      };
+      if (w.Razorpay) return open();
+      const sc = document.createElement("script");
+      sc.src = "https://checkout.razorpay.com/v1/checkout.js";
+      sc.onload = open;
+      sc.onerror = () => reject(new Error("Razorpay script failed"));
+      document.body.appendChild(sc);
+    });
 
   return (
     <SafeAreaView style={s.c}>

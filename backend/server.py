@@ -9,12 +9,18 @@ import logging
 import uuid
 import random
 import string
+import csv
+import io
+import hmac
+import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 import bcrypt
 import jwt
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+import httpx
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Response
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -53,11 +59,16 @@ def create_token(user_id: str, role: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 
-async def get_current_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> dict:
-    if not creds:
+async def get_current_user(
+    request: Request,
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> dict:
+    # Try Bearer header first, then session_token cookie (Google auth flow)
+    token = creds.credentials if creds else request.cookies.get("session_token")
+    if not token:
         raise HTTPException(401, "Not authenticated")
     try:
-        payload = jwt.decode(creds.credentials, JWT_SECRET, algorithms=[JWT_ALG])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
     except jwt.ExpiredSignatureError:
         raise HTTPException(401, "Token expired")
     except jwt.InvalidTokenError:
@@ -106,6 +117,21 @@ class VerifyOtpIn(BaseModel):
 class StaffLoginIn(BaseModel):
     staff_id: str
     password: str
+
+
+class GoogleCallbackIn(BaseModel):
+    session_id: str
+
+
+class RazorpayOrderIn(BaseModel):
+    order_id: str  # our internal order id
+
+
+class RazorpayVerifyIn(BaseModel):
+    order_id: str  # our internal order id
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
 
 
 class CreateStaffIn(BaseModel):
@@ -168,9 +194,12 @@ class ShopSettingsIn(BaseModel):
     accent_color: str = "#5EEAD4"
     logo_base64: str = ""
     cover_base64: str = ""
+    admin_emails: List[str] = []
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
 
 
-# ---------- Customer OTP Auth ----------
+# ---------- Customer OTP Auth (kept for backward compatibility) ----------
 @api_router.post("/auth/request-otp")
 async def request_otp(data: RequestOtpIn):
     phone = data.phone.strip()
@@ -232,6 +261,71 @@ async def staff_login(data: StaffLoginIn):
 @api_router.get("/auth/me")
 async def me(user: dict = Depends(get_current_user)):
     return user
+
+
+@api_router.post("/auth/logout")
+async def logout(response: Response, user: dict = Depends(get_current_user)):
+    response.delete_cookie("session_token", path="/")
+    return {"ok": True}
+
+
+# ---------- Google Auth (Emergent-managed) ----------
+@api_router.post("/auth/google-callback")
+async def google_callback(data: GoogleCallbackIn, response: Response):
+    """
+    Frontend sends session_id obtained from auth.emergentagent.com redirect.
+    We exchange it for user info, create/retrieve user, assign role based on admin allowlist.
+    """
+    async with httpx.AsyncClient(timeout=15) as cx:
+        r = await cx.get(
+            "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
+            headers={"X-Session-ID": data.session_id},
+        )
+    if r.status_code != 200:
+        raise HTTPException(401, "Invalid Google session")
+    info = r.json()
+    email = (info.get("email") or "").lower().strip()
+    name = info.get("name") or "Customer"
+    picture = info.get("picture") or ""
+    if not email:
+        raise HTTPException(400, "Google session has no email")
+
+    # Determine role from admin allowlist in shop_settings
+    shop = await db.shop_settings.find_one({"id": "main"}, {"_id": 0}) or {}
+    admin_emails = [e.lower().strip() for e in (shop.get("admin_emails") or [])]
+    role = "admin" if email in admin_emails else "customer"
+
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if not user:
+        user = {
+            "id": str(uuid.uuid4()),
+            "email": email,
+            "phone": "",
+            "name": name,
+            "picture": picture,
+            "role": role,
+            "password_hash": "",
+            "auth_provider": "google",
+            "created_at": now_iso(),
+            "addresses": [],
+            "preferences": {},
+        }
+        await db.users.insert_one(user)
+    else:
+        # Always sync role with current allowlist on every login
+        if user.get("role") != role and user.get("role") != "staff":
+            await db.users.update_one({"id": user["id"]}, {"$set": {"role": role, "name": name, "picture": picture}})
+            user["role"] = role
+        user.pop("password_hash", None)
+        user.pop("_id", None)
+
+    token = create_token(user["id"], user["role"])
+    # Also set cookie for web SPAs
+    response.set_cookie(
+        key="session_token", value=token,
+        httponly=True, secure=True, samesite="none", path="/", max_age=30 * 24 * 3600,
+    )
+    return {"access_token": token, "user": user}
 
 
 # ---------- Staff Management (admin only) ----------
@@ -327,21 +421,31 @@ async def create_product(data: ProductIn, _admin: dict = Depends(require_admin))
 
 
 @api_router.put("/products/{pid}")
-async def update_product(pid: str, data: ProductIn, _admin: dict = Depends(require_admin)):
-    res = await db.products.update_one({"id": pid}, {"$set": data.dict()})
-    if not res.matched_count:
+async def update_product(pid: str, data: ProductIn, user: dict = Depends(require_admin)):
+    # Staff can update name/desc/image/unit/stock/category but NOT price/discount/active
+    existing = await db.products.find_one({"id": pid}, {"_id": 0})
+    if not existing:
         raise HTTPException(404, "Not found")
+    if user.get("role") == "staff":
+        # restrict to allowed fields, keep existing price/discount/active
+        payload = data.dict()
+        payload["price"] = existing["price"]
+        payload["discount_pct"] = existing.get("discount_pct", 0)
+        payload["active"] = existing.get("active", True)
+        await db.products.update_one({"id": pid}, {"$set": payload})
+    else:
+        await db.products.update_one({"id": pid}, {"$set": data.dict()})
     return await db.products.find_one({"id": pid}, {"_id": 0})
 
 
 @api_router.delete("/products/{pid}")
-async def delete_product(pid: str, _admin: dict = Depends(require_admin)):
+async def delete_product(pid: str, _admin: dict = Depends(require_super_admin)):
     await db.products.delete_one({"id": pid})
     return {"ok": True}
 
 
 @api_router.patch("/products/{pid}/active")
-async def toggle_active(pid: str, active: bool, _admin: dict = Depends(require_admin)):
+async def toggle_active(pid: str, active: bool, _admin: dict = Depends(require_super_admin)):
     await db.products.update_one({"id": pid}, {"$set": {"active": active}})
     return {"ok": True, "active": active}
 
@@ -479,6 +583,81 @@ async def admin_dashboard(_admin: dict = Depends(require_admin)):
             "today_delivered": len(delivered), "today_revenue": revenue,
             "low_stock_count": len(low_stock), "total_products": total_products,
             "low_stock_items": low_stock[:10]}
+
+
+# ---------- Order CSV/Excel Export ----------
+@api_router.get("/admin/orders/export")
+async def export_orders(_admin: dict = Depends(require_admin), days: int = 30):
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    orders = await db.orders.find({"created_at": {"$gte": since}}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Order No", "Date", "Customer", "Phone", "Address", "Items", "Subtotal", "Tax", "Delivery", "Total", "Payment", "Status"])
+    for o in orders:
+        items = " | ".join([f"{i['quantity']}x {i['name']} @₹{i.get('price', 0)}" for i in o.get("items", [])])
+        addr = f"{o['address'].get('line1', '')}, {o['address'].get('city', '')}-{o['address'].get('pincode', '')}"
+        w.writerow([
+            o["order_no"], o["created_at"], o["user_name"], o["user_phone"], addr,
+            items, o.get("subtotal", 0), o.get("tax", 0), o.get("delivery_fee", 0),
+            o.get("total", 0), o.get("payment_method", ""), o.get("status", ""),
+        ])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=grocigo_orders_{days}d.csv"},
+    )
+
+
+# ---------- Razorpay ----------
+def get_razorpay_client():
+    """Get razorpay client using keys from shop_settings (admin-configurable)."""
+    import razorpay
+    return razorpay
+
+
+async def _razorpay_keys():
+    shop = await db.shop_settings.find_one({"id": "main"}, {"_id": 0}) or {}
+    return shop.get("razorpay_key_id", ""), shop.get("razorpay_key_secret", "")
+
+
+@api_router.post("/payments/razorpay/create")
+async def razorpay_create(data: RazorpayOrderIn, user: dict = Depends(get_current_user)):
+    key_id, key_secret = await _razorpay_keys()
+    if not key_id or not key_secret:
+        raise HTTPException(400, "Razorpay not configured. Admin must set keys in Shop Settings.")
+    o = await db.orders.find_one({"id": data.order_id}, {"_id": 0})
+    if not o or o["user_id"] != user["id"]:
+        raise HTTPException(404, "Order not found")
+    import razorpay
+    client = razorpay.Client(auth=(key_id, key_secret))
+    try:
+        rp_order = client.order.create({
+            "amount": int(round(o["total"] * 100)),  # paise
+            "currency": "INR",
+            "receipt": o["order_no"],
+            "notes": {"internal_order_id": o["id"]},
+        })
+    except Exception as e:
+        raise HTTPException(502, f"Razorpay error: {e}")
+    await db.orders.update_one({"id": o["id"]}, {"$set": {"razorpay_order_id": rp_order["id"]}})
+    return {"key_id": key_id, "rp_order": rp_order, "order": {"id": o["id"], "total": o["total"], "name": user["name"]}}
+
+
+@api_router.post("/payments/razorpay/verify")
+async def razorpay_verify(data: RazorpayVerifyIn, user: dict = Depends(get_current_user)):
+    _key_id, key_secret = await _razorpay_keys()
+    if not key_secret:
+        raise HTTPException(400, "Razorpay not configured")
+    body = f"{data.razorpay_order_id}|{data.razorpay_payment_id}".encode()
+    expected = hmac.new(key_secret.encode(), body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, data.razorpay_signature):
+        raise HTTPException(400, "Invalid signature")
+    await db.orders.update_one(
+        {"id": data.order_id, "user_id": user["id"]},
+        {"$set": {"payment_status": "paid", "razorpay_payment_id": data.razorpay_payment_id}},
+    )
+    return {"ok": True}
 
 
 @api_router.get("/admin/balance-sheet")
