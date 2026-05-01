@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 # ---------- ENV ----------
 
-ROOT_DIR = Path(**file**).parent
+ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 MONGO_URL = os.environ["MONGO_URL"]
