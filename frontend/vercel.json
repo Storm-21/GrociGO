@@ -1,4 +1,10 @@
 {
 "buildCommand": "npx expo export --platform web",
-"outputDirectory": "dist"
+"outputDirectory": "web-build",
+"routes": [
+{
+"src": "/(.*)",
+"dest": "/index.html"
+}
+]
 }
